@@ -1,0 +1,7 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+server.log
+init_body.txt
+init_headers.txt
