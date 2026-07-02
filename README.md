@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project secures the public `weather-server-python` MCP tutorial server from the Model Context Protocol quickstart repository.
+> This repository contains my completed take-home assessment for the AuthPlane Technical Writing Intern application process. This project secures the public `weather-server-python` MCP tutorial server from the Model Context Protocol quickstart repository.
 
 The original server exposes two tools:
 
