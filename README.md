@@ -108,7 +108,9 @@ The automated tests do not invoke the weather tools or contact the National Weat
 
 ## Production Considerations
 
-This local prototype is for evaluation only. Production use should replace the local shared secret with an authorization server such as AuthPlane, asymmetric signing keys and JWKS discovery, HTTPS, key rotation, revocation, secure secret storage, structured audit logs, rate limiting, and more granular authorization policies.
+This local prototype is for evaluation only. It demonstrates the MCP resource-server side of authentication and authorization: validating bearer JWTs and enforcing a required scope before tools run.
+
+A production implementation could replace the local shared secret with a centralized authorization server such as AuthPlane, using asymmetric signing keys, JWKS-based key discovery, HTTPS, key rotation, revocation strategy, secure secret storage, structured audit logs, rate limiting, and more granular authorization policies.
 
 ## AuthPlane Developer-Experience Observation
 
@@ -124,4 +126,4 @@ This project adapts the public `weather-server-python` tutorial from the Model C
 
 For a more detailed walkthrough of the server-selection rationale, local security model, JWT validation behavior, and test evidence, see the accompanying technical notes:
 
-AuthPlane Take-Home — Technical Notes and Implementation Walkthrough: https://docs.google.com/document/d/1-joHTaRsEs-t6tMpxtNTMHGRjF9uCHLXbgeVPVkhwMM/edit?usp=sharing
+[AuthPlane Take-Home — Technical Notes and Implementation Walkthrough](https://docs.google.com/document/d/1-joHTaRsEs-t6tMpxtNTMHGRjF9uCHLXbgeVPVkhwMM/edit?usp=sharing)
