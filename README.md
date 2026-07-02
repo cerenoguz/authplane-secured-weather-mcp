@@ -119,3 +119,9 @@ AuthPlane would be valuable in production as the centralized issuer and policy l
 ## Attribution
 
 This project adapts the public `weather-server-python` tutorial from the Model Context Protocol `quickstart-resources` repository. The upstream license notice is preserved in `LICENSE`.
+
+## Additional Technical Notes
+
+For a more detailed walkthrough of the server-selection rationale, local security model, JWT validation behavior, and test evidence, see the accompanying technical notes:
+
+AuthPlane Take-Home — Technical Notes and Implementation Walkthrough: https://docs.google.com/document/d/1-joHTaRsEs-t6tMpxtNTMHGRjF9uCHLXbgeVPVkhwMM/edit?usp=sharing
