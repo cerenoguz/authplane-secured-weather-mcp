@@ -6,8 +6,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.28.1",
-    "mcp[cli]>=1.26.0",
-    "PyJWT>=2.10.1",
+    "mcp[cli]>=1.26.0,<1.28.0",
+    "authplane-mcp>=0.2.0,<0.3.0",
 ]
 
 [build-system]

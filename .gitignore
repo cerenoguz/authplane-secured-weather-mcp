@@ -5,3 +5,9 @@ __pycache__/
 server.log
 init_body.txt
 init_headers.txt
+
+.env.authplane
+
+.authplane-client.json
+
+.Rhistory

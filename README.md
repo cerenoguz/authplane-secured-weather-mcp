@@ -1,129 +1,209 @@
-# Securing a Public MCP Server with an AuthPlane-Compatible JWT Layer
+# Securing a Public MCP Server with AuthPlane
+
+> This repository contains my completed take-home assessment for the AuthPlane Technical Writing Intern application process.
 
 ## Overview
 
-> This repository contains my completed take-home assessment for the AuthPlane Technical Writing Intern application process. This project secures the public `weather-server-python` MCP tutorial server from the Model Context Protocol quickstart repository.
+This project secures the public `weather-server-python` tutorial from the Model Context Protocol quickstart repository.
 
-The original server exposes two tools:
+The original server exposes two weather tools:
 
-- `get_alerts(state)`
-- `get_forecast(latitude, longitude)`
+* `get_alerts(state)`
+* `get_forecast(latitude, longitude)`
 
-The original implementation runs locally over stdio and has no bearer-token validation, caller identity check, scope requirement, or authorization boundary. That is acceptable for a tutorial example, but it would be unsafe if exposed over a network.
+Originally, the server ran locally over stdio and did not validate bearer tokens, identify callers, require scopes, or enforce an authorization boundary. That is appropriate for a tutorial, but an HTTP-exposed version would allow any reachable client to invoke its tools.
 
-This prototype converts the server to local Streamable HTTP and adds an AuthPlane-compatible JWT resource-server layer. Clients must provide a valid bearer JWT with the `weather:read` scope.
+## Repository Selection and Security Posture
 
-## Repository and Security Posture
+**Source repository:** [`modelcontextprotocol/quickstart-resources`](https://github.com/modelcontextprotocol/quickstart-resources)
+**Selected component:** `weather-server-python`
 
-Source repository: `modelcontextprotocol/quickstart-resources`  
-Selected component: `weather-server-python`
+I selected this server because it is a small official MCP tutorial project with a limited, understandable codebase and weather-only tools. It does not access email, files, databases, Slack, browser automation, or other sensitive systems.
 
-I selected this server because it is a small public MCP tutorial project with harmless weather tools and a limited codebase. The original source creates `FastMCP("weather")` and registers tools without a token verifier, authorization provider, bearer-token parser, identity check, or required scope.
+The original implementation creates `FastMCP("weather")` and registers tools without a token verifier, bearer-token processing, user identity, required scopes, or authorization checks.
 
-The original server is appropriate for local learning, but an HTTP-exposed version would allow any reachable client to invoke its tools unless authentication and authorization were added.
+All MCP and AuthPlane work in this project was performed locally. The authorized weather-tool test calls the public U.S. National Weather Service API through the tutorial server’s normal functionality; it does not interact with a live third-party MCP deployment.
 
-## Implementation
+## AuthPlane Implementation
 
-The secured server:
+I ran the actual AuthPlane authorization server locally in Docker, bound only to `127.0.0.1` on ports 9000 and 9001. I registered `http://localhost:8000/mcp` as an AuthPlane Mint Resource with the `weather:read` scope, then created a confidential client using the client-credentials grant. In `weather.py`, I replaced the custom local JWT verifier with AuthPlane’s official `authplane-mcp` adapter. `authplane_mcp_auth(...)` discovers AuthPlane authorization-server metadata, retrieves JWKS signing keys, configures JWT validation for the registered resource URI, and returns the verifier and authentication settings passed into `FastMCP`. The server publishes MCP protected-resource metadata, and each weather tool calls `require_scope("weather:read")` before executing.
 
-- binds only to `127.0.0.1:8000`;
-- uses Streamable HTTP at `/mcp`;
-- requires `Authorization: Bearer <JWT>`;
-- validates JWT signature, issuer, audience, issued-at time, expiration, and subject;
-- requires `weather:read` before MCP initialization or tool access;
-- uses the MCP SDK protected-resource metadata support.
+The secured MCP endpoint remains local-only:
 
-`auth.py` provides `LocalJWTVerifier`, which returns an MCP `AccessToken` only after a JWT passes validation. `weather.py` wires that verifier into `FastMCP` and configures `required_scopes=["weather:read"]`.
-
-This separates:
-
-1. Authentication: Is the bearer token valid?
-2. Authorization: Does the valid token include `weather:read`?
+```text
+http://127.0.0.1:8000/mcp
+```
 
 ## Files Changed
 
-| File | Purpose |
-|---|---|
-| `weather.py` | Secured Streamable HTTP MCP server configuration |
-| `auth.py` | Local JWT validation layer |
-| `test_server_auth.py` | Automated authorization-boundary tests |
-| `weather_original.py` | Preserved original baseline |
-| `.env.example` | Safe example environment variable |
-| `.gitignore` | Prevents secrets and `.venv` from being committed |
-| `pyproject.toml` | Explicit `PyJWT` dependency |
+| File                     | Purpose                                                                                      |
+| ------------------------ | -------------------------------------------------------------------------------------------- |
+| `weather.py`             | Local Streamable HTTP MCP server protected by AuthPlane                                      |
+| `weather_original.py`    | Preserved baseline implementation                                                            |
+| `pyproject.toml`         | Adds `authplane-mcp` and pins a compatible MCP SDK version                                   |
+| `.env.authplane.example` | Safe template for local AuthPlane configuration                                              |
+| `.gitignore`             | Prevents secrets, temporary credential output, and virtual environments from being committed |
+| `README.md`              | Setup, verification, tradeoffs, and implementation notes                                     |
 
-## Setup
+## Local Setup
 
-Requirements: Python 3.10+. No Docker, cloud account, card, or public deployment is required.
+Tested with Python 3.13, Docker Desktop, `curl`, and `jq`.
 
-Create and activate the environment:
+Create the Python environment:
 
-    python3 -m venv .venv
-    source .venv/bin/activate
-    python -m pip install -e .
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+```
 
-Create a local development secret:
+Create local AuthPlane secrets:
 
-    python -c "import secrets; print('MCP_JWT_SECRET=' + secrets.token_urlsafe(32))" > .env
-    set -a
-    source .env
-    set +a
+```bash
+python -c "import secrets; print('AUTHPLANE_ADMIN_API_KEY=' + secrets.token_hex(32)); print('AUTHPLANE_SESSION_SECRET=' + secrets.token_hex(32))" > .env.authplane
+```
 
-Start the secured server:
+Start AuthPlane locally:
 
-    python weather.py
+```bash
+docker run -d \
+  --name authplane-weather \
+  --env-file .env.authplane \
+  -p 127.0.0.1:9000:9000 \
+  -p 127.0.0.1:9001:9001 \
+  -e AUTHPLANE_CLIENT_CREDENTIALS_ENABLED=true \
+  -e AUTHPLANE_DPOP_ENABLED=true \
+  -e AUTHPLANE_TOKEN_EXCHANGE_ENABLED=true \
+  -v authplane-weather-data:/data \
+  authplane/authserver:latest serve
+```
 
-The server is local only:
+Confirm that the local AuthPlane server is healthy:
 
-    http://127.0.0.1:8000/mcp
+```bash
+curl -sS http://localhost:9000/health
+```
 
-## Tests
+Register the MCP Resource. The URI must remain identical in the AuthPlane Resource registration, `weather.py`, and token requests:
 
-Run:
+```bash
+source .env.authplane
 
-    python -m unittest -v test_server_auth.py
+curl -sS -X POST http://localhost:9001/admin/resources \
+  -H "Authorization: Bearer $AUTHPLANE_ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "slug": "weather-mcp",
+    "uri": "http://localhost:8000/mcp",
+    "backend_kind": "mint",
+    "display_name": "AuthPlane Weather MCP",
+    "scopes": [
+      {
+        "name": "weather:read",
+        "description": "Read weather alerts and forecasts"
+      }
+    ]
+  }'
+```
 
-Verified results:
+Create a client-credentials client:
 
-| Case | Result |
-|---|---|
-| No bearer token | `401 Unauthorized` |
-| Valid JWT without `weather:read` | `403 Forbidden` |
-| Valid JWT with `weather:read` | `200 OK` |
-| Valid JWT calls `get_alerts("CA")` | `200 OK`, successful MCP tool result |
+```bash
+curl -sS -X POST http://localhost:9001/admin/clients \
+  -H "Authorization: Bearer $AUTHPLANE_ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "weather-mcp-test-client",
+    "grant_types": ["client_credentials"],
+    "token_endpoint_auth_method": "client_secret_post",
+    "scope": "weather:read"
+  }' > .authplane-client.json
 
-The automated tests do not invoke the weather tools or contact the National Weather Service API. A separate manual end-to-end test confirmed an authorized tool call succeeds.
+CLIENT_ID="$(jq -r '.client_id' .authplane-client.json)"
+CLIENT_SECRET="$(jq -r '.client_secret' .authplane-client.json)"
+
+printf '\nAUTHPLANE_CLIENT_ID=%s\nAUTHPLANE_CLIENT_SECRET=%s\n' \
+  "$CLIENT_ID" "$CLIENT_SECRET" >> .env.authplane
+
+rm -f .authplane-client.json
+```
+
+Start the protected MCP server:
+
+```bash
+python weather.py
+```
+
+## Verification
+
+In a separate Terminal, mint an AuthPlane-issued access token:
+
+```bash
+source .env.authplane
+
+TOKEN_RESPONSE="$(curl -sS -X POST http://localhost:9000/oauth/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=$AUTHPLANE_CLIENT_ID" \
+  -d "client_secret=$AUTHPLANE_CLIENT_SECRET" \
+  -d "resource=http://localhost:8000/mcp" \
+  -d "scope=weather:read")"
+
+ACCESS_TOKEN="$(printf '%s' "$TOKEN_RESPONSE" | jq -r '.access_token')"
+
+printf '%s' "$TOKEN_RESPONSE" | jq '{token_type, expires_in, scope}'
+```
+
+Verify that unauthenticated MCP initialization is rejected:
+
+```bash
+curl -i -sS -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
+```
+
+Verify that an AuthPlane-issued token is accepted:
+
+```bash
+curl -i -sS -X POST http://localhost:8000/mcp \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
+```
+
+Completed local verification results:
+
+| Case                                       | Result                                 |
+| ------------------------------------------ | -------------------------------------- |
+| No bearer token during MCP initialization  | `401 Unauthorized`                     |
+| AuthPlane-issued token with `weather:read` | `200 OK` during MCP initialization     |
+| Authenticated `tools/list` request         | `200 OK`; both weather tools available |
+| Authenticated `get_alerts("CA")` call      | `200 OK`; successful tool result       |
+
+The successful weather-tool call used an AuthPlane-issued bearer token, not a locally self-signed HMAC token.
 
 ## Comparison
 
-| Dimension | Original server | Secured prototype |
-|---|---|---|
-| Authentication model | None | Bearer JWT required |
-| Developer effort | Minimal tutorial setup | Verifier, config, tests, local secret |
-| Security posture | No caller identity or scopes | Signature, claims, and scope checks |
-| Deployment complexity | Low | Moderate; issuer and secret configuration |
-| Documentation quality | Brief tutorial README | Setup, tests, tradeoffs, limitations |
-| Auditability | No auth decisions | HTTP auth outcomes visible; production logging still needed |
-| Limitations | No auth layer | Local HS256 secret; no JWKS, OAuth flow, rotation, or revocation |
+| Dimension                    | Original Server                                 | Secured Version                                                                                                             |
+| ---------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Authentication model         | None                                            | AuthPlane-issued bearer JWT required                                                                                        |
+| Developer effort             | Minimal tutorial setup                          | Local AuthPlane server, Resource/client registration, SDK integration, and end-to-end verification                          |
+| Security posture             | No caller identity, token validation, or scopes | AuthPlane JWKS-backed JWT validation, audience binding, protected-resource metadata, and scope enforcement                  |
+| Deployment complexity        | Low                                             | Low for local development; higher in production with HTTPS and operational controls                                         |
+| Documentation quality        | Tutorial-focused                                | Setup, validation evidence, tradeoffs, and production considerations                                                        |
+| Auditability / observability | No authorization decisions                      | Authorization outcomes visible through `401` and `200` responses; structured audit logging remains a production requirement |
+| Known limitations            | No authentication layer                         | Local Docker configuration, localhost HTTP development mode, machine identity only, and no production lifecycle operations  |
+
+## Developer-Experience Notes
+
+The AuthPlane adapter fit the existing MCP Python SDK cleanly: the central code change was creating `authplane_mcp_auth(...)` once and unpacking its result into `FastMCP`. The main integration challenge was keeping the canonical Resource URI identical across AuthPlane Resource registration, SDK configuration, and the client token request, because that URI is also the token audience. For local development, `dev_mode=True` is required because the issuer and MCP server use localhost HTTP rather than production HTTPS.
 
 ## Production Considerations
 
-This local prototype is for evaluation only. It demonstrates the MCP resource-server side of authentication and authorization: validating bearer JWTs and enforcing a required scope before tools run.
-
-A production implementation could replace the local shared secret with a centralized authorization server such as AuthPlane, using asymmetric signing keys, JWKS-based key discovery, HTTPS, key rotation, revocation strategy, secure secret storage, structured audit logs, rate limiting, and more granular authorization policies.
-
-## AuthPlane Developer-Experience Observation
-
-The MCP SDK made the resource-server model clear: a verifier validates a bearer token, while `AuthSettings` expresses resource metadata and required scopes.
-
-AuthPlane would be valuable in production as the centralized issuer and policy layer, replacing the local development secret with OAuth token issuance, JWKS discovery, key rotation, and managed scope policy. The local compatible verifier made it possible to validate the resource-server behavior without Docker or a cloud deployment.
+This is a local evaluation prototype. A production deployment should use HTTPS, a non-development issuer, durable AuthPlane configuration, structured audit logging, monitoring, rate limits, client lifecycle management, secret rotation, and more granular authorization policy. It should also avoid relying on a broadly shared machine credential when end-user or agent identity is needed.
 
 ## Attribution
 
 This project adapts the public `weather-server-python` tutorial from the Model Context Protocol `quickstart-resources` repository. The upstream license notice is preserved in `LICENSE`.
-
-## Additional Technical Notes
-
-For a more detailed walkthrough of the server-selection rationale, local security model, JWT validation behavior, and test evidence, see the accompanying technical notes:
-
-[AuthPlane Take-Home — Technical Notes and Implementation Walkthrough](https://docs.google.com/document/d/1-joHTaRsEs-t6tMpxtNTMHGRjF9uCHLXbgeVPVkhwMM/edit?usp=sharing)

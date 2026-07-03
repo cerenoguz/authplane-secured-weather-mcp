@@ -1,33 +1,27 @@
+import asyncio
+import os
 from typing import Any
 
 import httpx
-from mcp.server.auth.settings import AuthSettings
+from authplane_mcp import authplane_mcp_auth, require_scope
 from mcp.server.fastmcp import FastMCP
 
-from auth import DEFAULT_ISSUER, LocalJWTVerifier
-
-# Local-only AuthPlane-compatible resource-server configuration.
-# A request must provide a valid JWT with the weather:read scope.
-mcp = FastMCP(
-    "weather",
-    token_verifier=LocalJWTVerifier(),
-    auth=AuthSettings(
-        issuer_url=DEFAULT_ISSUER,
-        resource_server_url="http://127.0.0.1:8000",
-        required_scopes=["weather:read"],
-    ),
-    host="127.0.0.1",
-    port=8000,
-)
-
-# Constants
 NWS_API_BASE = "https://api.weather.gov"
 USER_AGENT = "weather-app/1.0"
+
+# These must match the AuthPlane issuer and the canonical MCP resource URI.
+AUTHPLANE_ISSUER = os.getenv("AUTHPLANE_ISSUER", "http://localhost:9000")
+AUTHPLANE_RESOURCE = os.getenv(
+    "AUTHPLANE_RESOURCE",
+    "http://localhost:8000/mcp",
+)
+WEATHER_SCOPE = "weather:read"
 
 
 async def make_nws_request(url: str) -> dict[str, Any] | None:
     """Make a request to the NWS API with proper error handling."""
     headers = {"User-Agent": USER_AGENT, "Accept": "application/geo+json"}
+
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, headers=headers, timeout=30.0)
@@ -37,9 +31,10 @@ async def make_nws_request(url: str) -> dict[str, Any] | None:
             return None
 
 
-def format_alert(feature: dict) -> str:
+def format_alert(feature: dict[str, Any]) -> str:
     """Format an alert feature into a readable string."""
     props = feature["properties"]
+
     return f"""
 Event: {props.get("event", "Unknown")}
 Area: {props.get("areaDesc", "Unknown")}
@@ -49,64 +44,76 @@ Instructions: {props.get("instruction", "No specific instructions provided")}
 """
 
 
-@mcp.tool()
-async def get_alerts(state: str) -> str:
-    """Get weather alerts for a US state.
+async def main() -> None:
+    """Run the local weather MCP server with AuthPlane authentication."""
 
-    Args:
-        state: Two-letter US state code (e.g. CA, NY)
-    """
-    url = f"{NWS_API_BASE}/alerts/active/area/{state}"
-    data = await make_nws_request(url)
+    auth_result = await authplane_mcp_auth(
+        issuer=AUTHPLANE_ISSUER,
+        resource=AUTHPLANE_RESOURCE,
+        scopes=[WEATHER_SCOPE],
+        enforce_scopes_on_all_requests=True,
+        dev_mode=True,
+    )
 
-    if not data or "features" not in data:
-        return "Unable to fetch alerts or no alerts found."
+    mcp = FastMCP(
+        "weather",
+        host="127.0.0.1",
+        port=8000,
+        json_response=True,
+        **auth_result,
+    )
 
-    if not data["features"]:
-        return "No active alerts for this state."
+    @mcp.tool()
+    async def get_alerts(state: str) -> str:
+        """Get weather alerts for a two-letter US state code."""
+        require_scope(WEATHER_SCOPE)
 
-    alerts = [format_alert(feature) for feature in data["features"]]
-    return "\n---\n".join(alerts)
+        url = f"{NWS_API_BASE}/alerts/active/area/{state}"
+        data = await make_nws_request(url)
 
+        if not data or "features" not in data:
+            return "Unable to fetch alerts or no alerts found."
 
-@mcp.tool()
-async def get_forecast(latitude: float, longitude: float) -> str:
-    """Get weather forecast for a location.
+        if not data["features"]:
+            return "No active alerts for this state."
 
-    Args:
-        latitude: Latitude of the location
-        longitude: Longitude of the location
-    """
-    points_url = f"{NWS_API_BASE}/points/{latitude},{longitude}"
-    points_data = await make_nws_request(points_url)
+        return "\n---\n".join(format_alert(feature) for feature in data["features"])
 
-    if not points_data:
-        return "Unable to fetch forecast data for this location."
+    @mcp.tool()
+    async def get_forecast(latitude: float, longitude: float) -> str:
+        """Get a weather forecast for a latitude and longitude."""
+        require_scope(WEATHER_SCOPE)
 
-    forecast_url = points_data["properties"]["forecast"]
-    forecast_data = await make_nws_request(forecast_url)
+        points_url = f"{NWS_API_BASE}/points/{latitude},{longitude}"
+        points_data = await make_nws_request(points_url)
 
-    if not forecast_data:
-        return "Unable to fetch detailed forecast."
+        if not points_data:
+            return "Unable to fetch forecast data for this location."
 
-    periods = forecast_data["properties"]["periods"]
-    forecasts = []
-    for period in periods[:5]:
-        forecast = f"""
+        forecast_url = points_data["properties"]["forecast"]
+        forecast_data = await make_nws_request(forecast_url)
+
+        if not forecast_data:
+            return "Unable to fetch detailed forecast."
+
+        forecasts = []
+        for period in forecast_data["properties"]["periods"][:5]:
+            forecasts.append(
+                f"""
 {period["name"]}:
 Temperature: {period["temperature"]}°{period["temperatureUnit"]}
 Wind: {period["windSpeed"]} {period["windDirection"]}
 Forecast: {period["detailedForecast"]}
 """
-        forecasts.append(forecast)
+            )
 
-    return "\n---\n".join(forecasts)
+        return "\n---\n".join(forecasts)
 
-
-def main():
-    """Run the secured server locally with Streamable HTTP."""
-    mcp.run(transport="streamable-http")
+    try:
+        await mcp.run_streamable_http_async()
+    finally:
+        await auth_result.aclose()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
