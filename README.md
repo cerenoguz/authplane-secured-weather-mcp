@@ -1,6 +1,5 @@
 # Securing a Public MCP Server with AuthPlane
 
-> This repository contains my completed take-home assessment for the AuthPlane Technical Writing Intern application process.
 
 ## Overview
 
